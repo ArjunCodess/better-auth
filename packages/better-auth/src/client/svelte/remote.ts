@@ -54,13 +54,18 @@ const emailSignUpSchema = z
 function requestHeaders() {
 	const event = getRequestEvent();
 	const headers = new Headers(event.request.headers);
-	const jar = event.cookies.getAll();
+	const jar = event.cookies.getAll().filter((cookie) => cookie.value !== "");
 	if (jar.length === 0) {
 		headers.delete("cookie");
 	} else {
 		headers.set(
 			"cookie",
-			jar.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+			jar
+				.map(
+					(cookie) =>
+						`${encodeURIComponent(cookie.name)}=${encodeURIComponent(cookie.value)}`,
+				)
+				.join("; "),
 		);
 	}
 	return headers;

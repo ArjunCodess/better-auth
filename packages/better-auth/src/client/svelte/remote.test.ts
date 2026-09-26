@@ -88,27 +88,32 @@ describe("createRemoteAuthClient", () => {
 		expect(sessionReads).toBe(1);
 	});
 
-	it("forwards number and boolean sign-up fields", async () => {
+	it("forwards number and boolean sign-up fields from the cookie jar", async () => {
 		const instance = auth();
 		const client = createRemoteAuthClient(instance);
+		sessionReads = 0;
+		jar.splice(0, jar.length, { name: "session", value: "a; b=c" });
 		await client.signUp.email({
 			name: "Ada",
 			email: "a@b.co",
 			password: "secret",
+			callbackURL: "/welcome",
+			rememberMe: "true",
 			age: 31,
 			admin: false,
 		});
-		expect(instance.api.signUpEmail).toHaveBeenCalledWith(
-			expect.objectContaining({
-				body: expect.objectContaining({
-					name: "Ada",
-					email: "a@b.co",
-					password: "secret",
-					age: 31,
-					admin: false,
-				}),
-			}),
-		);
+		const call = instance.api.signUpEmail.mock.calls[0][0];
+		expect(call.headers.get("cookie")).toBe("session=a%3B%20b%3Dc");
+		expect(call.body).toEqual({
+			name: "Ada",
+			email: "a@b.co",
+			password: "secret",
+			callbackURL: "/welcome",
+			rememberMe: true,
+			age: 31,
+			admin: false,
+		});
+		expect(sessionReads).toBe(1);
 	});
 
 	it("rejects a sign-up form that is missing the password", async () => {
@@ -125,6 +130,10 @@ describe("createRemoteAuthClient", () => {
 		const client = createRemoteAuthClient(instance);
 		sessionReads = 0;
 		jar.splice(0, jar.length, { name: "session", value: "abc" });
+		instance.api.signOut.mockImplementation(async () => {
+			jar.splice(0, jar.length, { name: "session", value: "" });
+			return { success: true };
+		});
 		await client.signOut();
 		expect(cookieOf(instance.api.signOut.mock.calls[0][0])).toBe("session=abc");
 		expect(instance.api.getSession.mock.calls[0][0].headers.get("cookie")).toBe(
