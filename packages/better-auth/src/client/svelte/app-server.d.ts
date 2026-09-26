@@ -20,6 +20,9 @@ declare module "$app/server" {
 	): () => Promise<Awaited<Output>>;
 	export function query<Output>(
 		fn: () => Output | Promise<Output>,
-	): () => Promise<Awaited<Output>>;
-	export function getRequestEvent(): { request: Request };
+	): () => Promise<Awaited<Output>> & { refresh: () => Promise<void> };
+	export function getRequestEvent(): {
+		request: Request;
+		cookies: { getAll: () => Array<{ name: string; value: string }> };
+	};
 }

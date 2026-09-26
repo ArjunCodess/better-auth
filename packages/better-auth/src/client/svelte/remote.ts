@@ -49,10 +49,21 @@ const emailSignUpSchema = z
 		callbackURL: z.string().optional(),
 		rememberMe: z.string().optional(),
 	})
-	.catchall(z.string());
+	.catchall(z.any());
 
 function requestHeaders() {
-	return getRequestEvent().request.headers;
+	const event = getRequestEvent();
+	const headers = new Headers(event.request.headers);
+	const jar = event.cookies.getAll();
+	if (jar.length === 0) {
+		headers.delete("cookie");
+	} else {
+		headers.set(
+			"cookie",
+			jar.map((cookie) => `${cookie.name}=${cookie.value}`).join("; "),
+		);
+	}
+	return headers;
 }
 
 function rememberMeFromForm(value: string | undefined) {
@@ -88,10 +99,7 @@ export function createRemoteAuthClient<Auth extends RemoteAuth>(auth: Auth) {
 	const signInEmail = form(
 		emailSignInSchema,
 		async ({ email, password, callbackURL, rememberMe }) => {
-			// Do not refresh useSession here. sveltekitCookies writes the new
-			// cookie with event.cookies.set, and request.headers still hold
-			// the pre-sign-in cookie, so a refresh would cache a signed-out session.
-			return auth.api.signInEmail({
+			const result = await auth.api.signInEmail({
 				body: {
 					email,
 					password,
@@ -100,13 +108,15 @@ export function createRemoteAuthClient<Auth extends RemoteAuth>(auth: Auth) {
 				},
 				headers: requestHeaders(),
 			});
+			await useSession().refresh();
+			return result;
 		},
 	);
 
 	const signUpEmail = form(emailSignUpSchema, async (data) => {
 		const { name, email, password, image, callbackURL, rememberMe, ...extra } =
 			data;
-		return auth.api.signUpEmail({
+		const result = await auth.api.signUpEmail({
 			body: {
 				name,
 				email,
@@ -120,10 +130,14 @@ export function createRemoteAuthClient<Auth extends RemoteAuth>(auth: Auth) {
 			},
 			headers: requestHeaders(),
 		});
+		await useSession().refresh();
+		return result;
 	});
 
 	const signOut = command(async () => {
-		return auth.api.signOut({ headers: requestHeaders() });
+		const result = await auth.api.signOut({ headers: requestHeaders() });
+		await useSession().refresh();
+		return result;
 	});
 
 	return {
