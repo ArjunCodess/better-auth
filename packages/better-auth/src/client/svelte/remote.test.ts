@@ -88,11 +88,14 @@ describe("createRemoteAuthClient", () => {
 		expect(sessionReads).toBe(1);
 	});
 
-	it("forwards number and boolean sign-up fields from the cookie jar", async () => {
+	it("forwards number and boolean sign-up fields and the cookie-jar cookie", async () => {
 		const instance = auth();
 		const client = createRemoteAuthClient(instance);
 		sessionReads = 0;
-		jar.splice(0, jar.length, { name: "session", value: "a; b=c" });
+		jar.splice(0, jar.length, {
+			name: "my+auth.session_token",
+			value: "a; b=c",
+		});
 		await client.signUp.email({
 			name: "Ada",
 			email: "a@b.co",
@@ -103,7 +106,9 @@ describe("createRemoteAuthClient", () => {
 			admin: false,
 		});
 		const call = instance.api.signUpEmail.mock.calls[0][0];
-		expect(call.headers.get("cookie")).toBe("session=a%3B%20b%3Dc");
+		expect(call.headers.get("cookie")).toBe(
+			"my+auth.session_token=a%3B%20b%3Dc",
+		);
 		expect(call.body).toEqual({
 			name: "Ada",
 			email: "a@b.co",

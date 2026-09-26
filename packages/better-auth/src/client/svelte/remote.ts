@@ -54,6 +54,7 @@ const emailSignUpSchema = z
 function requestHeaders() {
 	const event = getRequestEvent();
 	const headers = new Headers(event.request.headers);
+	// Deleted cookies stay in the jar with an empty value (sveltejs/kit#16269).
 	const jar = event.cookies.getAll().filter((cookie) => cookie.value !== "");
 	if (jar.length === 0) {
 		headers.delete("cookie");
@@ -61,10 +62,7 @@ function requestHeaders() {
 		headers.set(
 			"cookie",
 			jar
-				.map(
-					(cookie) =>
-						`${encodeURIComponent(cookie.name)}=${encodeURIComponent(cookie.value)}`,
-				)
+				.map((cookie) => `${cookie.name}=${encodeURIComponent(cookie.value)}`)
 				.join("; "),
 		);
 	}
