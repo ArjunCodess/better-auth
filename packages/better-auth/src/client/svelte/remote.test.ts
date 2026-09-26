@@ -1,14 +1,41 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const headers = new Headers({ cookie: "session=abc" });
-const refresh = vi.fn(async () => {});
+let sessionReads = 0;
 
 vi.mock("$app/server", () => ({
 	getRequestEvent: () => ({ request: { headers } }),
 	query: (fn: () => Promise<unknown>) => {
-		return () => Object.assign(fn(), { refresh });
+		let current: Promise<unknown> | undefined;
+		const run = () => {
+			sessionReads += 1;
+			current = fn();
+			return current;
+		};
+		const queryFn = () => current ?? run();
+		queryFn.refresh = async () => {
+			await run();
+		};
+		return queryFn;
 	},
-	form: (_schema: unknown, fn: (data: any) => Promise<unknown>) => fn,
+	form: (
+		schema: {
+			safeParse: (data: unknown) => {
+				success: boolean;
+				data?: unknown;
+				error?: unknown;
+			};
+		},
+		fn: (data: unknown) => Promise<unknown>,
+	) => {
+		return async (data: unknown) => {
+			const parsed = schema.safeParse(data);
+			if (!parsed.success) {
+				throw parsed.error;
+			}
+			return fn(parsed.data);
+		};
+	},
 	command: (fn: () => Promise<unknown>) => fn,
 }));
 
@@ -26,45 +53,70 @@ function auth() {
 }
 
 describe("createRemoteAuthClient", () => {
-	beforeEach(() => {
-		refresh.mockClear();
-	});
-
-	it("signs in with the request headers and refreshes the session", async () => {
+	it("signs in with the request headers and does not reread the old cookie", async () => {
 		const instance = auth();
 		const client = createRemoteAuthClient(instance);
+		sessionReads = 0;
 		await client.signIn.email({
 			email: "a@b.co",
 			password: "secret",
 			rememberMe: "on",
+			callbackURL: "/dashboard",
 		});
 		expect(instance.api.signInEmail).toHaveBeenCalledWith({
-			body: { email: "a@b.co", password: "secret", rememberMe: true },
+			body: {
+				email: "a@b.co",
+				password: "secret",
+				callbackURL: "/dashboard",
+				rememberMe: true,
+			},
 			headers,
 		});
-		expect(refresh).toHaveBeenCalledOnce();
+		expect(sessionReads).toBe(0);
 	});
 
-	it("signs up with name, email, and password", async () => {
+	it("forwards extra sign-up fields and rememberMe", async () => {
 		const instance = auth();
 		const client = createRemoteAuthClient(instance);
 		await client.signUp.email({
 			name: "Ada",
 			email: "a@b.co",
 			password: "secret",
+			callbackURL: "/welcome",
+			rememberMe: "true",
+			company: "Analytical",
 		});
 		expect(instance.api.signUpEmail).toHaveBeenCalledWith({
-			body: { name: "Ada", email: "a@b.co", password: "secret" },
+			body: {
+				name: "Ada",
+				email: "a@b.co",
+				password: "secret",
+				callbackURL: "/welcome",
+				rememberMe: true,
+				company: "Analytical",
+			},
 			headers,
 		});
 	});
 
-	it("signs out and reads the session from the request", async () => {
+	it("rejects a sign-up form that is missing the password", async () => {
 		const instance = auth();
 		const client = createRemoteAuthClient(instance);
+		await expect(
+			client.signUp.email({ name: "Ada", email: "a@b.co" }),
+		).rejects.toBeTruthy();
+		expect(instance.api.signUpEmail).not.toHaveBeenCalled();
+	});
+
+	it("signs out and reads the session once until refresh", async () => {
+		const instance = auth();
+		const client = createRemoteAuthClient(instance);
+		sessionReads = 0;
 		await client.signOut();
 		expect(instance.api.signOut).toHaveBeenCalledWith({ headers });
 		await client.useSession();
-		expect(instance.api.getSession).toHaveBeenCalledWith({ headers });
+		await client.useSession();
+		expect(sessionReads).toBe(1);
+		expect(instance.api.getSession).toHaveBeenCalledTimes(1);
 	});
 });

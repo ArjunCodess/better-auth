@@ -9,11 +9,23 @@ import { command, form, getRequestEvent, query } from "$app/server";
 export type RemoteAuth = {
 	api: {
 		signInEmail: (context: {
-			body: { email: string; password: string; rememberMe?: boolean };
+			body: {
+				email: string;
+				password: string;
+				callbackURL?: string;
+				rememberMe?: boolean;
+			};
 			headers: Headers;
 		}) => Promise<unknown>;
 		signUpEmail: (context: {
-			body: { name: string; email: string; password: string };
+			body: {
+				name: string;
+				email: string;
+				password: string;
+				image?: string;
+				callbackURL?: string;
+				rememberMe?: boolean;
+			} & Record<string, unknown>;
 			headers: Headers;
 		}) => Promise<unknown>;
 		signOut: (context: { headers: Headers }) => Promise<unknown>;
@@ -24,14 +36,20 @@ export type RemoteAuth = {
 const emailSignInSchema = z.object({
 	email: z.string(),
 	password: z.string(),
+	callbackURL: z.string().optional(),
 	rememberMe: z.string().optional(),
 });
 
-const emailSignUpSchema = z.object({
-	name: z.string(),
-	email: z.string(),
-	password: z.string(),
-});
+const emailSignUpSchema = z
+	.object({
+		name: z.string(),
+		email: z.string(),
+		password: z.string(),
+		image: z.string().optional(),
+		callbackURL: z.string().optional(),
+		rememberMe: z.string().optional(),
+	})
+	.catchall(z.string());
 
 function requestHeaders() {
 	return getRequestEvent().request.headers;
@@ -69,36 +87,43 @@ export function createRemoteAuthClient<Auth extends RemoteAuth>(auth: Auth) {
 
 	const signInEmail = form(
 		emailSignInSchema,
-		async ({ email, password, rememberMe }) => {
-			const result = await auth.api.signInEmail({
+		async ({ email, password, callbackURL, rememberMe }) => {
+			// Do not refresh useSession here. sveltekitCookies writes the new
+			// cookie with event.cookies.set, and request.headers still hold
+			// the pre-sign-in cookie, so a refresh would cache a signed-out session.
+			return auth.api.signInEmail({
 				body: {
 					email,
 					password,
+					...(callbackURL ? { callbackURL } : {}),
 					rememberMe: rememberMeFromForm(rememberMe),
 				},
 				headers: requestHeaders(),
 			});
-			await useSession().refresh();
-			return result;
 		},
 	);
 
-	const signUpEmail = form(
-		emailSignUpSchema,
-		async ({ name, email, password }) => {
-			const result = await auth.api.signUpEmail({
-				body: { name, email, password },
-				headers: requestHeaders(),
-			});
-			await useSession().refresh();
-			return result;
-		},
-	);
+	const signUpEmail = form(emailSignUpSchema, async (data) => {
+		const { name, email, password, image, callbackURL, rememberMe, ...extra } =
+			data;
+		return auth.api.signUpEmail({
+			body: {
+				name,
+				email,
+				password,
+				...(image ? { image } : {}),
+				...(callbackURL ? { callbackURL } : {}),
+				...(rememberMe !== undefined
+					? { rememberMe: rememberMeFromForm(rememberMe) }
+					: {}),
+				...extra,
+			},
+			headers: requestHeaders(),
+		});
+	});
 
 	const signOut = command(async () => {
-		const result = await auth.api.signOut({ headers: requestHeaders() });
-		await useSession().refresh();
-		return result;
+		return auth.api.signOut({ headers: requestHeaders() });
 	});
 
 	return {
